@@ -228,11 +228,6 @@ curl "http://localhost:8000/api/v1/leaderboard?metric=average_score&limit=10"
 
 ---
 
-## License
-MIT
-
----
-
 ## Links
 - **GitHub:** github.com/CheerathAniketh/CASE_FORGE
 - **LinkedIn:** linkedin.com/in/cheerathaniketh

@@ -10,7 +10,7 @@ Built as part of the LMS platform at Sketch Brains.
 
 ## Status
 
-**Backend: deployable.** Full generate → validate → evaluate → persist loop is verified end-to-end against a live Postgres database, with Redis-backed idempotency on generation and a live leaderboard. Not yet live — see [What's Left](#whats-left) below.
+**Backend: deployable.** Full generate → validate → evaluate → persist loop is verified end-to-end against a live Postgres database, with Redis-backed idempotency on generation and a live leaderboard. Not yet live — see [What's Left](#whats-left) below. Measured latency and validation results are in [Performance (measured)](#performance-measured).
 
 ---
 
@@ -36,7 +36,7 @@ This backend is designed to be embedded into an existing LMS. It has **no built-
 - API-first — built to sit behind an existing LMS, not stand alone
 - No content management — cases generate automatically
 - Real data tools baked into generation: market research, financial analysis, competitive intel
-- Postgres-backed, ready for concurrent multi-user load
+- Postgres-backed; concurrent multi-user load is a design goal and has not been load-tested
 - Live leaderboard computed from submitted solutions
 - Duplicate-submit protection via a short-TTL Redis idempotency guard
 
@@ -95,7 +95,7 @@ This backend is designed to be embedded into an existing LMS. It has **no built-
 | **Agentic AI** | LangGraph 0.0.15 |
 | **LLM** | Groq — `openai/gpt-oss-120b` (Groq deprecated the old Llama models in 2026; set via `GROQ_MODEL` env var) |
 | **Database** | SQLAlchemy (async) + Supabase Postgres, via Session Pooler |
-| **Cache** | Upstash Redis (cloud REST API) — idempotency guard on case generation, sized for ~300-user LMS scale |
+| **Cache** | Upstash Redis (cloud REST API) — idempotency guard on case generation, designed for a ~300-user LMS (not load-tested) |
 | **Language** | Python 3.12 (do **not** use 3.14 — `asyncpg` and `pydantic-core` don't have compatible wheels yet) |
 | **Async** | asyncio, uvicorn |
 
@@ -132,7 +132,8 @@ caseforge/
 │   └── logger.py                   # Logging
 │
 └── scripts/
-    └── init_db.py                  # One-time DB initialization
+    ├── init_db.py                  # One-time DB initialization
+    └── bench_generate.py           # Latency / validation benchmark
 ```
 
 ---
@@ -147,7 +148,7 @@ caseforge/
 
 ### 1. Clone & set up the venv
 ```bash
-git clone <this-repo>
+git clone https://github.com/CheerathAniketh/CASE_FORGE.git
 cd CASE_FORGE
 python3.12 -m venv venv
 source venv/bin/activate
@@ -163,8 +164,6 @@ DATABASE_URL=postgresql+asyncpg://postgres.<project-ref>:<url-encoded-password>@
 UPSTASH_REDIS_REST_URL=<your Upstash REST URL>
 UPSTASH_REDIS_REST_TOKEN=<your Upstash REST token>
 ```
-
-> Fill in the exact `UPSTASH_*` variable names your `cache.py` actually reads — update this block to match `config.py` if the names differ.
 
 Get the `DATABASE_URL` from your Supabase project: **Connect → Direct (Connection string) tab → Session pooler**. If your DB password has special characters, URL-encode them (`@` → `%40`, etc.) or the connection string will fail to parse.
 
@@ -242,7 +241,7 @@ START
   └─ Max retries hit       → [ERROR] → END
 ```
 
-Verified in testing: `refinements_used: 0` on first-try generations against `gpt-oss-120b` — validation is passing cleanly without needing the refine loop.
+Measured: 44 of 44 generated cases passed validation on the first attempt (`refinements_used: 0`) across three benchmark runs, so the refine loop was never triggered. Small sample; see Performance (measured) below.
 
 ---
 
@@ -286,6 +285,25 @@ CREATE TABLE user_solutions (
 
 ---
 
+## Performance (measured)
+
+Measured on 4 Oct 2026 with `scripts/bench_generate.py`: sequential `POST /api/v1/cases/generate` requests (beginner, Product Strategy, 60-minute limit, cycling through five industries) from a laptop in India to a local server, with Groq, Supabase Postgres and Upstash Redis in the cloud. These are small samples from one machine, so treat them as indicative, not as a benchmark of the service.
+
+| Scenario | Requests | End-to-end p50 | End-to-end max | Reported generation p50 |
+|---|---|---|---|---|
+| Paced, one request every 10s | 12 | 4.63s | 13.38s | 3.06s |
+| Back-to-back | 12 | 5.87s | 15.91s | 3.27s |
+| Back-to-back | 20 | 11.90s | 14.18s | 10.20s |
+
+- **What the reported time covers.** `generation_time_ms` is timed inside the LangGraph workflow (tools, Groq call, validation). It excludes the Postgres save (1.4 to 2.4s in our logs) and the Redis calls, which are part of the end-to-end figure.
+- **The Groq call.** In the logged calls the model's own compute was about 2.0 to 3.0s for 970 to 1,260 completion tokens, and every call ended with `finish_reason=stop`, so none hit the 2,048-token cap.
+- **Slowdown under back-to-back requests.** After roughly 7 to 8 requests in a row, end-to-end time rose from about 4 to 5s to 8 to 16s. In the logged slow calls the elapsed time (7 to 14s) was far above Groq's reported compute (about 2.6 to 3.0s), so the extra time was spent outside Groq's processing. It disappeared when requests were spaced 10s apart (the one slow paced request, 13.38s, was the first, sent right after the back-to-back run). This is consistent with rate limiting and client-side retries; we did not confirm the cause. The slowest paced request is why the table shows max, not p95, for such small samples.
+- **Validation.** 44 of 44 generated cases passed validation on the first attempt, across one complexity level and focus area.
+- **Idempotency guard.** A duplicate request inside the 10s window returned in 0.027s (the server logged a cache hit), against 5.55s for the original.
+- **Not measured.** Solution-evaluation latency, leaderboard latency, parallel requests, and behaviour under real load. The 100 to 300 concurrent user figure elsewhere in this README is a design target, not a result.
+
+---
+
 ## What's Left
 
 This backend works end-to-end locally against production Postgres. Not yet done:
@@ -295,7 +313,7 @@ This backend works end-to-end locally against production Postgres. Not yet done:
 - [x] **DB session lifetime** — done. `WorkflowService` and `CaseService.evaluate_solution` now open a Postgres session only immediately before/after the Groq call, not across it.
 - [ ] **Async task queue (Redis)** — for handling 100–300 concurrent users without blocking on Groq in-request. Three approaches scoped (FastAPI `BackgroundTasks`, RQ/arq + worker on Upstash Redis, or Upstash QStash) — build is on hold pending a scope decision from the team lead, since the three options solve meaningfully different problems.
 - [ ] **Load testing (Locust)** — depends on the async task queue being in place first.
-- [ ] **Rate limiting** — none currently. Would likely ride on the same Redis instance as the task queue.
+- [ ] **Rate limiting** — none currently. Would likely ride on the same Redis instance as the task queue. Our benchmark saw latency rise under back-to-back requests (see [Performance (measured)](#performance-measured)).
 - [ ] **Leaderboard caching** — leaderboard reads are uncached and computed live on every request; worth revisiting once real traffic patterns are known.
 - [ ] **Confirm with team**: `CaseService.generate_case` looks like dead code — `routes.py` calls `WorkflowService.generate_case_with_workflow()` instead. Kept functional for now, pending confirmation before removal.
 
@@ -308,13 +326,14 @@ This backend works end-to-end locally against production Postgres. Not yet done:
 - Supabase's **Session pooler** (port 5432) is what's configured here, not the Transaction pooler (6543) — the transaction pooler breaks asyncpg's default prepared-statement behavior with SQLAlchemy unless explicitly disabled.
 - Cross-region latency is real: Supabase pooler region vs. server region adds a few seconds to DB round-trips. Worth picking a region close to wherever this actually deploys.
 - Local dev uses **Upstash Redis** (cloud REST API) to match production, not a local Valkey/Redis install — if you have a system Redis running locally it's unused by the app and only useful for manual `redis-cli`-style debugging.
+- **A dead Redis is slow, not fatal.** If the Upstash host cannot be reached, generation still works, but each cache call waits about 3 seconds before failing (we saw roughly 6 seconds added per request when our database had been deleted on the provider side). A shorter cache timeout would fix this and is not done yet.
 
 ---
 
 ## Security
 
 - Environment variables for secrets (never commit `.env`)
-- Input validation via Pydantic
+- Input validation via Pydantic (types and shapes only). The student's solution text is sent to the LLM for scoring; we have not tested or mitigated prompt injection against the evaluator.
 - SQL injection prevention via SQLAlchemy
 - No auth layer — see Architecture note above; the LMS is the trust boundary
 - Error handling without exposing internals
@@ -333,6 +352,7 @@ Built by Aniketh Cheerath — Sketch Brains
 
 - **Aug 18, 2026** — Added Redis (Upstash) idempotency guard on case generation, a live leaderboard endpoint, and fixed a stale `GROQ_MODEL` pointing at a deprecated Llama model.
 - **Aug 18, 2026 (evening)** — Closed out the DB session lifetime issue: Postgres sessions in `WorkflowService` and `CaseService.evaluate_solution` no longer stay open across the multi-second Groq call. Also fixed a hardcoded model name in the saved DB record and scoped three options for the still-pending async task queue.
+- **Oct 4, 2026** — Benchmarked case generation (see Performance), added `scripts/bench_generate.py` and a per-call Groq timing log line, and replaced a deleted Upstash Redis database.
 
 For full historical detail beyond this summary, see the repo's commit history.
 

@@ -1,7 +1,7 @@
 # CASE_FORGE
 **AI-Powered Case Study Generator for Professional Development**
 
-Transform how students learn business strategy. CASE_FORGE generates unique, dynamically-graded case studies using LLM agents—no templates, no repeats. Built for LMS platforms (Sketch Brains), production-ready with async PostgreSQL, Redis caching, and live leaderboards.
+Transform how students learn business strategy. CASE_FORGE generates unique, dynamically-graded case studies using LLM agents—no templates, no repeats. Built for LMS platforms (Sketch Brains), with async PostgreSQL, Redis caching, and live leaderboards.
 
 ---
 
@@ -20,10 +20,10 @@ CASE_FORGE automates case generation end-to-end:
 
 ## Results
 - ✅ **End-to-end pipeline** — generate → validate → refine (auto-retry) → evaluate → persist fully verified
-- ✅ **Async I/O** — built for 100–300 concurrent learners; no blocking on LLM calls
+- ✅ **Async I/O** — designed for 100–300 concurrent learners (not load-tested); no blocking on LLM calls
 - ✅ **No duplicates** — Redis idempotency guard dedupes identical requests within 10s
 - ✅ **Live leaderboard** — 4 metrics (average_score, best_score, total_solved, sum_score) computed on every request
-- 🎯 **Production-ready** — SQLAlchemy async ORM, Supabase Session pooler, error handling, logging
+- 🎯 **Stack** — SQLAlchemy async ORM, Supabase Session pooler, error handling, logging
 
 ---
 
@@ -72,15 +72,15 @@ curl -X POST http://localhost:8000/api/v1/cases/generate \
 **Response:**
 ```json
 {
+  "success": true,
   "case_id": 42,
+  "case_uuid": "<uuid>",
   "title": "StreamPay Pivot: Regulatory Headwinds and Competitive Pressure",
   "industry": "FinTech",
   "complexity": "beginner",
   "case_data": { ... },
   "generation_time_ms": 3240,
-  "tokens_used": 1850,
-  "model_used": "openai/gpt-oss-120b",
-  "refinement_count": 0
+  "refinements_used": 0
 }
 ```
 
@@ -146,8 +146,6 @@ Database (Supabase Postgres)
 └─ users (user profiles)
 ```
 
-See [DEVELOPMENT.md](./DEVELOPMENT.md) for full schema and design decisions.
-
 ---
 
 ## Key Design Decisions
@@ -160,18 +158,26 @@ See [DEVELOPMENT.md](./DEVELOPMENT.md) for full schema and design decisions.
 
 ## Validation
 - ✅ **Groq LLM** — tested with openai/gpt-oss-120b (modern OSS model)
-- ✅ **LangGraph workflow** — case generation fully validated, refinement loop works (refinement_count: 0 on typical runs)
+- ✅ **LangGraph workflow** — 44 of 44 generated cases passed validation on the first attempt (`refinements_used: 0`) across three benchmark runs on 4 Oct 2026, so the refine loop was never exercised. One complexity level and focus area only
 - ✅ **Postgres async** — SQLAlchemy async ORM verified against Supabase Session pooler
-- ✅ **Redis idempotency** — Upstash REST API tested; duplicate submits within 10s correctly deduped
+- ✅ **Redis idempotency** — Upstash REST API tested; duplicate submits within 10s correctly deduped (a duplicate returned in 0.027s with a cache hit logged, versus 5.55s for the original)
 - ✅ **Leaderboard** — 4 metrics (average_score, best_score, total_solved, sum_score) verified against real data
 
 ---
 
 ## Performance
-- **Case generation** — ~3s end-to-end (Groq call ~2.5s, validation ~0.5s)
-- **Solution evaluation** — ~1.5s per submission
-- **Leaderboard query** — <100ms for 100+ users
-- **Database** — Supabase Session pooler (connection pooling handled)
+Measured on 4 Oct 2026 with `scripts/bench_generate.py` (`python scripts/bench_generate.py [N] [DELAY_SECONDS]`): sequential `POST /api/v1/cases/generate` requests (beginner, Product Strategy, 60-minute limit, cycling through five industries) from a laptop in India to a local server, with Groq, Supabase Postgres and Upstash Redis in the cloud. These are small samples from one machine, so treat them as indicative, not as a benchmark of the service.
+
+| Scenario | Requests | End-to-end p50 | End-to-end max | Reported generation p50 |
+|---|---|---|---|---|
+| Paced, one request every 10s | 12 | 4.63s | 13.38s | 3.06s |
+| Back-to-back | 12 | 5.87s | 15.91s | 3.27s |
+| Back-to-back | 20 | 11.90s | 14.18s | 10.20s |
+
+- **What the reported time covers.** `generation_time_ms` is timed inside the LangGraph workflow (tools, Groq call, validation). It excludes the Postgres save (about 1.4s in our logs) and the Redis calls, which are part of the end-to-end figure.
+- **The Groq call.** Model compute was about 2.0 to 3.0s for 970 to 1,260 completion tokens, and every call ended with `finish_reason=stop`, so none hit the 2,048-token cap.
+- **Slowdown under back-to-back requests.** After roughly 7 to 8 requests in a row, end-to-end time rose from about 4 to 5s to 8 to 16s. In the logged slow calls the elapsed time (7 to 14s) was far above Groq's reported compute (about 2.6 to 3.0s), so the extra time was spent outside Groq's processing. It went away when requests were spaced 10s apart (the one slow paced request was the first, sent right after a back-to-back run). This is consistent with rate limiting and client-side retries; the cause was not confirmed.
+- **Not measured.** Solution-evaluation latency, leaderboard latency, parallel requests, and behaviour under real load. The 100 to 300 concurrent learner figure in this README is a design target, not a result.
 
 ---
 
@@ -195,7 +201,7 @@ curl "http://localhost:8000/api/v1/leaderboard?metric=average_score&limit=10"
 
 ## Security
 - ✅ Environment variables for secrets (never commit .env)
-- ✅ Pydantic input validation (prevents injection)
+- ✅ Pydantic input validation (types and shapes only). Student solution text is sent to the LLM for scoring; prompt injection against the evaluator has not been tested or mitigated
 - ✅ SQLAlchemy ORM (SQL injection prevention)
 - ✅ Error handling without exposing internals
 
@@ -204,7 +210,7 @@ curl "http://localhost:8000/api/v1/leaderboard?metric=average_score&limit=10"
 ## Next Steps (Future Scope)
 - Async task queue (FastAPI BackgroundTasks or Upstash QStash) for 300+ concurrent users
 - Load testing (Locust) + performance tuning
-- Rate limiting (Redis-backed)
+- Rate limiting (Redis-backed). Latency rose under back-to-back requests in our benchmark (see Performance)
 - Leaderboard caching (once traffic patterns stabilize)
 
 ---
@@ -213,6 +219,7 @@ curl "http://localhost:8000/api/v1/leaderboard?metric=average_score&limit=10"
 - **Python 3.12 only** — 3.14 incompatibilities with asyncpg and pydantic-core
 - **Supabase Session pooler** (port 5432) — not Transaction pooler (6543)
 - **GROQ_MODEL env var** — pinned to openai/gpt-oss-120b; Groq deprecated legacy Llama models in 2026
+- **An unreachable Redis is slow, not fatal** — if the Upstash host cannot be reached, generation still works, but each cache call waits about 3s before failing (we saw roughly 6s added per request). A shorter cache timeout would fix this and is not done yet
 
 ---
 
@@ -222,11 +229,10 @@ curl "http://localhost:8000/api/v1/leaderboard?metric=average_score&limit=10"
 ---
 
 ## License
-MIT — Private repo, not yet public
+MIT
 
 ---
 
 ## Links
 - **GitHub:** github.com/CheerathAniketh/CASE_FORGE
 - **LinkedIn:** linkedin.com/in/cheerathaniketh
-- **LMS Integration Docs:** See [DEVELOPMENT.md](./DEVELOPMENT.md)

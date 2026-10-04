@@ -1,7 +1,7 @@
-# CASE_FORGE
+# Yukti
 **AI-Powered Case Study Generator for Professional Development**
 
-Transform how students learn business strategy. CASE_FORGE generates unique, dynamically-graded case studies using LLM agents—no templates, no repeats. Built for LMS platforms (Sketch Brains), with async PostgreSQL, Redis caching, and live leaderboards.
+Transform how students learn business strategy. Yukti generates unique, dynamically-graded case studies using LLM agents—no templates, no repeats. Built for LMS platforms (Sketch Brains), with async PostgreSQL, Redis caching, and live leaderboards.
 
 ---
 
@@ -9,7 +9,7 @@ Transform how students learn business strategy. CASE_FORGE generates unique, dyn
 Traditional case-based learning relies on static, hand-written scenarios. Professors recycle the same cases yearly. Students see identical problems across cohorts. Scaling personalized case generation across 100+ concurrent learners is technically hard and expensive.
 
 ## Our Solution
-CASE_FORGE automates case generation end-to-end:
+Yukti automates case generation end-to-end:
 - **Generates** unique cases on-demand using LLM agents (via Groq LLM) + real market research tools
 - **Validates** quality (completeness, realism, gradeability) via a LangGraph state machine
 - **Evaluates** student solutions across 5 dimensions with personalized, metric-anchored feedback
@@ -39,8 +39,8 @@ CASE_FORGE automates case generation end-to-end:
 ## Quick Start
 ```bash
 # Clone & install
-git clone https://github.com/CheerathAniketh/CASE_FORGE
-cd CASE_FORGE
+git clone https://github.com/CheerathAniketh/Yukti
+cd Yukti
 python3.12 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
@@ -229,5 +229,5 @@ curl "http://localhost:8000/api/v1/leaderboard?metric=average_score&limit=10"
 ---
 
 ## Links
-- **GitHub:** github.com/CheerathAniketh/CASE_FORGE
+- **GitHub:** github.com/CheerathAniketh/Yukti
 - **LinkedIn:** linkedin.com/in/cheerathaniketh

@@ -1,4 +1,5 @@
 import json
+import time
 import asyncio
 from groq import Groq
 from config import settings
@@ -48,11 +49,23 @@ class GroqService:
 
     def _call_sync(self, prompt: str, temperature: float, max_tokens: int) -> str:
         """Synchronous Groq API call (runs in thread pool)"""
+        t0 = time.perf_counter()
         response = self.client.chat.completions.create(
             messages=[{"role": "user", "content": prompt}],
             model=self.model,
             temperature=temperature,
             max_tokens=max_tokens,
+        )
+        elapsed = time.perf_counter() - t0
+        usage = getattr(response, "usage", None)
+        logger.info(
+            "groq_call_timing "
+            f"elapsed={elapsed:.2f}s "
+            f"prompt_tokens={getattr(usage, 'prompt_tokens', None)} "
+            f"completion_tokens={getattr(usage, 'completion_tokens', None)} "
+            f"groq_total_time={getattr(usage, 'total_time', None)} "
+            f"groq_queue_time={getattr(usage, 'queue_time', None)} "
+            f"finish_reason={response.choices[0].finish_reason}"
         )
         return response.choices[0].message.content
 

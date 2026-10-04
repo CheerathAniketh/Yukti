@@ -1,40 +1,28 @@
-# Bytecode
-__pycache__/
-*.py[cod]
-*.pyo
-
-# Virtual env
-venv/
-.env/
-.env.* 
+# Secrets: never commit these
+.env
+.env.*
 !.env.example
 
-# Logs
-*.log
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# OS files
-.DS_Store
-Thumbs.db
-
-# IDEs
+# Editors and OS
 .vscode/
 .idea/
+.DS_Store
 
-# Testing / coverage
-.coverage
-htmlcov/
-.pytest_cache/
+# Local logs and scratch
+*.log
+*.bak
+*.tgz
 
-# Migrations / DB
-*.sqlite3
-*.db
-
-# Build / dist
-build/
-dist/
-*.egg-info/
-
-# Misc
-*.swp
-
-.env
+# Local assistant notes (remove these two lines if you want them in the repo)
+AGENTS.md
+CLAUDE.md
